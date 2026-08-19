@@ -63,6 +63,9 @@ public:
   bool hasMoreTwists() override;
   nav_2d_msgs::msg::Twist2D nextTwist() override;
 
+  /** Reload parameters that may change only at a stopped trial boundary. */
+  void reset() override;
+
   dwb_msgs::msg::Trajectory2D generateTrajectory(
     const geometry_msgs::msg::Pose2D & start_pose,
     const nav_2d_msgs::msg::Twist2D & start_vel,
@@ -129,6 +132,8 @@ protected:
 
   KinematicsHandler::Ptr kinematics_handler_;
   std::shared_ptr<VelocityIterator> velocity_iterator_;
+
+  nav2_util::LifecycleNode::WeakPtr node_;
 
   double sim_time_;
 

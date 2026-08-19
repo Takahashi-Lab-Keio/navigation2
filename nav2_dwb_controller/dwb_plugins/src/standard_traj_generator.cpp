@@ -33,6 +33,8 @@
  */
 
 #include "dwb_plugins/standard_traj_generator.hpp"
+#include <cmath>
+#include <stdexcept>
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -50,6 +52,7 @@ void StandardTrajectoryGenerator::initialize(
   const nav2_util::LifecycleNode::SharedPtr & nh,
   const std::string & plugin_name)
 {
+  node_ = nh;
   plugin_name_ = plugin_name;
   kinematics_handler_ = std::make_shared<KinematicsHandler>();
   kinematics_handler_->initialize(nh, plugin_name_);
@@ -94,6 +97,20 @@ void StandardTrajectoryGenerator::initialize(
   nh->get_parameter(plugin_name + ".angular_granularity", angular_granularity_);
   nh->get_parameter(plugin_name + ".include_last_point", include_last_point_);
   nh->get_parameter(plugin_name + ".limit_vel_cmd_in_traj", limit_vel_cmd_in_traj_);
+}
+
+void StandardTrajectoryGenerator::reset()
+{
+  const auto node = node_.lock();
+  if (!node) {
+    throw std::runtime_error(plugin_name_ + " lifecycle node is unavailable");
+  }
+  double updated_sim_time = sim_time_;
+  node->get_parameter(plugin_name_ + ".sim_time", updated_sim_time);
+  if (!std::isfinite(updated_sim_time) || updated_sim_time <= 0.0) {
+    throw std::invalid_argument(plugin_name_ + ".sim_time must be positive");
+  }
+  sim_time_ = updated_sim_time;
 }
 
 void StandardTrajectoryGenerator::initializeIterator(

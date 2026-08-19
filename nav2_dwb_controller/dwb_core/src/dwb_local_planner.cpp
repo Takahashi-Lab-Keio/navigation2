@@ -169,6 +169,17 @@ DWBLocalPlanner::cleanup()
   traj_generator_.reset();
 }
 
+void
+DWBLocalPlanner::reset()
+{
+  if (traj_generator_) {
+    traj_generator_->reset();
+  }
+  for (auto & critic : critics_) {
+    critic->reset();
+  }
+}
+
 std::string
 DWBLocalPlanner::resolveCriticClassName(std::string base_name)
 {

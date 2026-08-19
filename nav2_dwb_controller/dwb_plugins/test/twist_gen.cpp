@@ -343,6 +343,24 @@ TEST(TrajectoryGenerator, basic)
   matchPose(res.poses[n - 1], DEFAULT_SIM_TIME * forward.x, 0, 0);
 }
 
+TEST(TrajectoryGenerator, resetReloadsPredictionTime)
+{
+  auto nh = makeTestNode(
+    "runtime_sim_time", {
+    rclcpp::Parameter("dwb.discretize_by_time", true),
+    rclcpp::Parameter("dwb.time_granularity", 0.05)});
+  StandardTrajectoryGenerator gen;
+  gen.initialize(nh, "dwb");
+
+  const auto update = nh->set_parameter(rclcpp::Parameter("dwb.sim_time", 2.4));
+  ASSERT_TRUE(update.successful);
+  gen.reset();
+
+  const auto trajectory = gen.generateTrajectory(origin, forward, forward);
+  ASSERT_FALSE(trajectory.time_offsets.empty());
+  EXPECT_NEAR(durationToSec(trajectory.time_offsets.back()), 2.4, 1.0e-9);
+}
+
 TEST(TrajectoryGenerator, basic_no_last_point)
 {
   auto nh = makeTestNode(

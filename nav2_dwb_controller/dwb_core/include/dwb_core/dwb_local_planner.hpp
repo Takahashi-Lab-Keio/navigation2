@@ -88,6 +88,9 @@ public:
    */
   void cleanup() override;
 
+  /** Reset trajectory and critic state at a stopped trial boundary. */
+  void reset() override;
+
   /**
    * @brief nav2_core setPlan - Sets the global plan
    * @param path The global plan
