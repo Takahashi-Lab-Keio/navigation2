@@ -263,6 +263,69 @@ TEST(NodeLatticeTest, test_node_lattice)
   delete costmapA;
 }
 
+TEST(NodeLatticeTest, in_place_turn_checks_intermediate_footprint)
+{
+  auto node = std::make_shared<rclcpp_lifecycle::LifecycleNode>("rotation_sweep_test");
+  nav2_smac_planner::SearchInfo info;
+  info.lattice_filepath = ament_index_cpp::get_package_share_directory("nav2_smac_planner") +
+    "/sample_primitives/5cm_resolution/0.5m_turning_radius/diff/output.json";
+  unsigned int size_x = 200;
+  unsigned int size_y = 200;
+  unsigned int headings = 16;
+  nav2_smac_planner::NodeLattice::initMotionModel(
+    nav2_smac_planner::MotionModel::STATE_LATTICE, size_x, size_y, headings, info);
+  auto costmap_ros = std::make_shared<nav2_costmap_2d::Costmap2DROS>();
+  costmap_ros->on_configure(rclcpp_lifecycle::State());
+  auto map = costmap_ros->getCostmap();
+  *map = nav2_costmap_2d::Costmap2D(200, 200, 0.05, 0.0, 0.0, 0);
+  nav2_smac_planner::GridCollisionChecker checker(costmap_ros, 72, node);
+  nav2_costmap_2d::Footprint footprint;
+  for (const auto & xy : std::vector<std::pair<double, double>>{
+    {-0.2, -0.3}, {0.8, -0.3}, {0.8, 0.3}, {-0.2, 0.3}})
+  {
+    geometry_msgs::msg::Point point;
+    point.x = xy.first;
+    point.y = xy.second;
+    footprint.push_back(point);
+  }
+  checker.setFootprint(footprint, false, 0.0);
+  nav2_smac_planner::MotionPrimitive primitive{};
+  primitive.start_angle = 0;
+  primitive.end_angle = 4;
+  primitive.poses = {
+    {0.0, 0.0, 0.0, nav2_smac_planner::TurnDirection::UNKNOWN},
+    {0.0, 0.0, static_cast<float>(M_PI_2), nav2_smac_planner::TurnDirection::UNKNOWN}};
+  nav2_smac_planner::NodeLattice turn(0);
+  turn.setPose({100, 100, 4});
+  turn.setMotionPrimitive(&primitive);
+  ASSERT_TRUE(turn.isNodeValid(false, &checker, &primitive));
+  nav2_smac_planner::NodeLattice start(1);
+  nav2_smac_planner::NodeLattice::NodePtr turn_ptr = &turn;
+  EXPECT_FLOAT_EQ(start.getTraversalCost(turn_ptr), info.rotation_penalty);
+  start.setMotionPrimitive(&primitive);
+  EXPECT_FLOAT_EQ(start.getTraversalCost(turn_ptr), info.rotation_penalty);
+
+  bool found_intermediate_contact = false;
+  for (unsigned int x = 107; x <= 116 && !found_intermediate_contact; ++x) {
+    for (unsigned int y = 107; y <= 116; ++y) {
+      map->setCost(x, y, nav2_costmap_2d::LETHAL_OBSTACLE);
+      if (!checker.inCollision(100, 100, 0, false) &&
+        !checker.inCollision(100, 100, 18, false) &&
+        checker.inCollision(100, 100, 9, false))
+      {
+        nav2_smac_planner::NodeLattice blocked_turn(0);
+        blocked_turn.setPose({100, 100, 4});
+        blocked_turn.setMotionPrimitive(&primitive);
+        EXPECT_FALSE(blocked_turn.isNodeValid(false, &checker, &primitive));
+        found_intermediate_contact = true;
+        break;
+      }
+      map->setCost(x, y, 0);
+    }
+  }
+  ASSERT_TRUE(found_intermediate_contact);
+}
+
 TEST(NodeLatticeTest, test_get_neighbors)
 {
   auto lnode = std::make_shared<rclcpp_lifecycle::LifecycleNode>("test");

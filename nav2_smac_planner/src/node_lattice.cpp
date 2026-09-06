@@ -233,9 +233,18 @@ bool NodeLattice::isNodeValid(
 
   // Check primitive end pose
   // Convert grid quantization of primitives to radians, then collision checker quantization
-  static const double bin_size = 2.0 * M_PI / collision_checker->getPrecomputedAngles().size();
-  const double angle = std::fmod(motion_table.getAngleFromBin(this->pose.theta),
-      2.0 * M_PI) / bin_size;
+  const auto bin_count = collision_checker->getPrecomputedAngles().size();
+  const double bin_size = 2.0 * M_PI / bin_count;
+  const auto angle_bin = [bin_count, bin_size](double theta) {
+      theta = std::fmod(theta, 2.0 * M_PI);
+      if (theta < 0.0) {
+        theta += 2.0 * M_PI;
+      }
+      // Quantize before narrowing to float: near 2*pi a float can round to bin_count.
+      return static_cast<float>(std::min(
+          static_cast<size_t>(theta / bin_size), bin_count - 1u));
+    };
+  const float angle = angle_bin(motion_table.getAngleFromBin(this->pose.theta));
   if (collision_checker->inCollision(
       this->pose.x, this->pose.y, angle /*bin in collision checker*/, traverse_unknown))
   {
@@ -247,11 +256,12 @@ bool NodeLattice::isNodeValid(
   // Set the cost of a node to the highest cost across the primitive
   float max_cell_cost = collision_checker->getCost();
 
-  // If valid motion primitives are set, check intermediary poses > 1 cell apart
+  // Check translation and rotation; repeated XY poses still sweep a noncircular footprint.
   if (motion_primitive) {
     const float & grid_resolution = motion_table.lattice_metadata.grid_resolution;
     const float & resolution_diag_sq = 2.0 * grid_resolution * grid_resolution;
-    MotionPose last_pose(1e9, 1e9, 1e9, TurnDirection::UNKNOWN);
+    MotionPose last_pose = motion_primitive->poses.front();
+    bool checked_pose = false;
     MotionPose pose_dist(0.0, 0.0, 0.0, TurnDirection::UNKNOWN);
 
     // Back out the initial node starting point to move motion primitive relative to
@@ -263,30 +273,37 @@ bool NodeLattice::isNodeValid(
     for (auto it = motion_primitive->poses.begin(); it != motion_primitive->poses.end(); ++it) {
       // poses are in metric coordinates from (0, 0), not grid space yet
       pose_dist = *it - last_pose;
+      const double angular_distance = std::remainder(it->_theta - last_pose._theta, 2.0 * M_PI);
       // Avoid square roots by (hypot(x, y) > res) == (x*x+y*y > diag*diag)
-      if (pose_dist._x * pose_dist._x + pose_dist._y * pose_dist._y > resolution_diag_sq) {
-        last_pose = *it;
-        // Convert primitive pose into grid space if it should be checked
-        prim_pose._x = initial_pose._x + (it->_x / grid_resolution);
-        prim_pose._y = initial_pose._y + (it->_y / grid_resolution);
-        // If reversing, invert the angle because the robot is backing into the primitive
-        // not driving forward with it
-        if (is_backwards) {
-          prim_pose._theta = std::fmod(it->_theta + M_PI, 2.0 * M_PI);
-        } else {
-          prim_pose._theta = std::fmod(it->_theta, 2.0 * M_PI);
-        }
-        if (collision_checker->inCollision(
+      if (!checked_pose || std::abs(angular_distance) > 1e-6 ||
+        pose_dist._x * pose_dist._x + pose_dist._y * pose_dist._y > resolution_diag_sq)
+      {
+        const unsigned int steps = checked_pose ?
+          std::max(1u,
+            static_cast<unsigned int>(std::ceil(std::abs(angular_distance) / bin_size))) : 1u;
+        for (unsigned int step = 1; step <= steps; ++step) {
+          const double fraction = static_cast<double>(step) / steps;
+          // Convert primitive pose into grid space if it should be checked
+          prim_pose._x = initial_pose._x +
+            ((last_pose._x + fraction * pose_dist._x) / grid_resolution);
+          prim_pose._y = initial_pose._y +
+            ((last_pose._y + fraction * pose_dist._y) / grid_resolution);
+          const double theta = last_pose._theta + fraction * angular_distance;
+          // Backwards motion mirrors the vehicle orientation, not the primitive's XY.
+          if (collision_checker->inCollision(
             prim_pose._x,
             prim_pose._y,
-            prim_pose._theta / bin_size /*bin in collision checker*/,
+            angle_bin(theta + (is_backwards ? M_PI : 0.0)),
             traverse_unknown))
-        {
-          _is_node_valid = false;
-          _cell_cost = std::max(max_cell_cost, collision_checker->getCost());
-          return false;
+          {
+            _is_node_valid = false;
+            _cell_cost = std::max(max_cell_cost, collision_checker->getCost());
+            return false;
+          }
+          max_cell_cost = std::max(max_cell_cost, collision_checker->getCost());
         }
-        max_cell_cost = std::max(max_cell_cost, collision_checker->getCost());
+        last_pose = *it;
+        checked_pose = true;
       }
     }
   }
@@ -305,18 +322,18 @@ float NodeLattice::getTraversalCost(const NodePtr & child)
             "cost without a known collision cost!");
   }
 
-  // this is the first node
   MotionPrimitive * prim = this->getMotionPrimitive();
   MotionPrimitive * transition_prim = child->getMotionPrimitive();
   const float prim_length =
     transition_prim->trajectory_length / motion_table.lattice_metadata.grid_resolution;
-  if (prim == nullptr) {
-    return prim_length;
-  }
 
-  // Pure rotation in place 1 angular bin in either direction
+  // Charge pure rotation at the start too; its translational length is zero.
   if (transition_prim->trajectory_length < 1e-4) {
     return motion_table.rotation_penalty * (1.0 + motion_table.cost_penalty * normalized_cost);
+  }
+
+  if (prim == nullptr) {
+    return prim_length;
   }
 
   float travel_cost = 0.0;
