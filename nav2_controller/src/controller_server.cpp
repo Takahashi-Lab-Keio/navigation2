@@ -26,6 +26,7 @@
 #include "nav2_util/node_utils.hpp"
 #include "nav2_util/geometry_utils.hpp"
 #include "nav2_controller/controller_server.hpp"
+#include "nav2_controller/control_loop_rate.hpp"
 
 using namespace std::chrono_literals;
 using rcl_interfaces::msg::ParameterType;
@@ -500,7 +501,8 @@ void ControllerServer::computeControl()
     }
 
     last_valid_cmd_time_ = now();
-    rclcpp::WallRate loop_rate(controller_frequency_);
+    ControlLoopRate loop_rate(
+      controller_frequency_, get_clock(), get_parameter("use_sim_time").as_bool());
     while (rclcpp::ok()) {
       auto start_time = this->now();
 
@@ -541,7 +543,12 @@ void ControllerServer::computeControl()
       computeAndPublishVelocity();
 
       auto cycle_duration = this->now() - start_time;
-      if (!loop_rate.sleep()) {
+      const bool cancellation_pending = action_server_->is_cancel_requested();
+      if (!loop_rate.sleep([this, cancellation_pending]() {
+          return !rclcpp::ok() || !action_server_->is_server_active() ||
+                 (!cancellation_pending && action_server_->is_cancel_requested());
+        }))
+      {
         RCLCPP_WARN(
           get_logger(),
           "Control loop missed its desired rate of %.4f Hz. Current loop rate is %.4f Hz.",
