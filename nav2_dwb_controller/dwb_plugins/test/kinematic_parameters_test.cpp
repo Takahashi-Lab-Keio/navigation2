@@ -113,6 +113,37 @@ TEST(KinematicParameters, SetAllParameters) {
 }
 
 
+TEST(KinematicParameters, RuntimeSpeedLimitRefreshesSquaredLimit)
+{
+  const std::string name = "runtime_speed";
+  auto node = nav2_util::LifecycleNode::make_shared(name);
+  node->declare_parameter(name + ".max_speed_xy", 0.2);
+  KinematicsHandlerTest kh;
+  kh.initialize(node, name);
+
+  for (const double speed : {0.8, 0.1, 0.6}) {
+    ASSERT_TRUE(node->set_parameters_atomically({
+        rclcpp::Parameter(name + ".max_speed_xy", speed),
+        rclcpp::Parameter(name + ".max_vel_x", speed),
+        rclcpp::Parameter(name + ".max_vel_theta", 0.7),
+        rclcpp::Parameter(name + ".acc_lim_x", 1.6),
+        rclcpp::Parameter(name + ".decel_lim_x", -1.6),
+        rclcpp::Parameter(name + ".acc_lim_theta", 1.2),
+        rclcpp::Parameter(name + ".decel_lim_theta", -1.2)}).successful);
+    auto kp = kh.getKinematics();
+    EXPECT_DOUBLE_EQ(node->get_parameter(name + ".max_speed_xy").as_double(), speed);
+    EXPECT_DOUBLE_EQ(kp.getMaxSpeedXY_SQ(), speed * speed);
+    EXPECT_TRUE(kp.isValidSpeed(speed, 0.0, 0.0));
+    EXPECT_FALSE(kp.isValidSpeed(speed + 0.01, 0.0, 0.0));
+    EXPECT_DOUBLE_EQ(kp.getMaxX(), speed);
+    EXPECT_DOUBLE_EQ(kp.getMaxTheta(), 0.7);
+    EXPECT_DOUBLE_EQ(kp.getAccX(), 1.6);
+    EXPECT_DOUBLE_EQ(kp.getDecelX(), -1.6);
+    EXPECT_DOUBLE_EQ(kp.getAccTheta(), 1.2);
+    EXPECT_DOUBLE_EQ(kp.getDecelTheta(), -1.2);
+  }
+}
+
 int main(int argc, char ** argv)
 {
   ::testing::InitGoogleTest(&argc, argv);
