@@ -36,6 +36,34 @@
 *********************************************************************/
 #include <nav2_voxel_grid/voxel_grid.hpp>
 #include <gtest/gtest.h>
+#include <limits>
+
+TEST(voxel_grid, clearingThresholdsMatchBitCount) {
+  nav2_voxel_grid::VoxelGrid grid(1, 1, 16);
+  for (unsigned int pattern = 0; pattern <= 0xffffu; ++pattern) {
+    for (unsigned int threshold = 0; threshold <= 18; ++threshold) {
+      for (bool marked_test : {false, true}) {
+        grid.getData()[0] = marked_test ? (pattern << 16) : pattern;
+        unsigned char cost = 100;
+        const auto unlimited = std::numeric_limits<unsigned int>::max();
+        grid.clearVoxelLineInMap(
+          0, 0, 15, 0, 0, 15, &cost,
+          marked_test ? unlimited : threshold, marked_test ? threshold : unlimited,
+          0, 255, unlimited, 0);
+        const auto column = grid.getData()[0];
+        unsigned int bits = marked_test ? column >> 16 :
+          uint16_t(column >> 16) ^ uint16_t(column);
+        unsigned int count = 0;
+        while (bits) {
+          count += bits & 1u;
+          bits >>= 1;
+        }
+        const unsigned char expected = count <= threshold ? 0 : (marked_test ? 100 : 255);
+        ASSERT_EQ(cost, expected) << pattern << ":" << threshold << ":" << marked_test;
+      }
+    }
+  }
+}
 
 TEST(voxel_grid, basicMarkingAndClearing) {
   int size_x = 50, size_y = 10, size_z = 16;

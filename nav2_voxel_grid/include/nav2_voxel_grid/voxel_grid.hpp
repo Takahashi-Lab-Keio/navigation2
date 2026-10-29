@@ -405,6 +405,18 @@ public:
 private:
     inline bool bitsBelowThreshold(unsigned int n, unsigned int bit_threshold)
     {
+      // These columns contain exactly 16 marked/unknown bits. The common
+      // thresholds (mark=0, unknown=15) need no loop or CPU-specific opcode.
+      // Preserve the original <= comparison, including thresholds above 16.
+      if (bit_threshold == 0) {
+        return n == 0;
+      }
+      if (bit_threshold >= 16) {
+        return true;
+      }
+      if (bit_threshold == 15) {
+        return n != 0xffffu;
+      }
       unsigned int bit_count;
       for (bit_count = 0; n; ) {
         ++bit_count;
